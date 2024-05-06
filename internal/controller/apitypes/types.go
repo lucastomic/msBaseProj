@@ -24,7 +24,8 @@ type Response struct {
 // Route is a struct with the necessary information for defaining and endpoint. Its path,
 // method (POST, GET, PUT, etc.) and handler.
 type Route struct {
-	Path    string  // The route's path. E.g. /someroute/anotherone
-	Method  string  // The HTTP method that will manage, like POST, PUT, GET, etc.
-	Handler APIFunc // The function that will handle the route
+	Path        string  // The route's path. E.g. /someroute/anotherone
+	Method      string  // The HTTP method that will manage, like POST, PUT, GET, etc.
+	Handler     APIFunc // The function that will handle the route
+	RequireAuth bool    // Defines if the endpoints requires authentication
 }

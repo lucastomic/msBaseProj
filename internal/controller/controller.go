@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
-	"github.com/lucastomic/dmsMetadataService/internal/controller/apitypes"
-	"github.com/lucastomic/dmsMetadataService/internal/errs"
+	"github.com/lucastomic/msBaseProj/internal/controller/apitypes"
+	"github.com/lucastomic/msBaseProj/internal/errs"
+	"github.com/lucastomic/msBaseProj/internal/logging"
+	"github.com/lucastomic/msBaseProj/internal/translator"
 )
 
 // Controller defines the interface for an HTTP controller.
@@ -18,7 +21,9 @@ type Controller interface {
 }
 
 // CommonController provides shared functionalities for handling HTTP requests across different controllers.
-type CommonController struct{}
+type CommonController struct {
+	logger logging.Logger
+}
 
 // ParseError takes an error and maps it to an HTTP response.
 // It uses the mapDomainErrorToHTTP function to convert domain-specific errors to HTTP errors,
@@ -31,7 +36,10 @@ func (c *CommonController) ParseError(
 	w http.ResponseWriter,
 	err error,
 ) apitypes.Response {
-	httpErr := mapDomainErrorToHTTP(err)
+	if errors.Is(err, errs.ErrinternalError) {
+		c.logger.Error(ctx, "internal error: %v", err)
+	}
+	httpErr := mapDomainErrorToHTTP(r.Context(), err)
 	return apitypes.Response{
 		Status:  httpErr.Code,
 		Content: map[string]any{"error": httpErr.Error()},
@@ -39,18 +47,47 @@ func (c *CommonController) ParseError(
 	}
 }
 
+// ReadIDFromPath reads the "id" path variable. For example, for /boat/{id}/book
+// and the concret url /boat/12/book ReadIDFromPath(r) would return 12.
+// This metod was thought only to be used to retrieve uint ids.
+// In case of no id var, it will throw an error. Also if the id isn't an uint.
+func (b CommonController) ReadIDFromPath(r *http.Request) (uint, error) {
+	idString := r.PathValue("id")
+	if idString == "" {
+		return 0, errors.New("no id provided at path")
+	}
+	id, err := strconv.ParseUint(idString, 10, 32)
+	if err != nil {
+		return 0, errors.New("id is not an unsigned integer")
+	}
+	return uint(id), nil
+}
+
 // mapDomainErrorToHTTP converts domain-specific errors to errs.HTTPError instances.
 // It checks for specific known errors and maps them to appropriate HTTP status codes and messages.
 // For unrecognized errors, it defaults to returning an "internal error" with a 500 status code.
-func mapDomainErrorToHTTP(err error) errs.HTTPError {
+func mapDomainErrorToHTTP(ctx context.Context, err error) errs.HTTPError {
+	i18n := &errs.I18nError{}
+	var message string
+	if errors.As(err, i18n) {
+		message = translator.TranslateGivenCtx(ctx, i18n.Code)
+		err = i18n.Unwrap()
+	} else {
+		message = err.Error()
+	}
+
 	switch {
 	case errors.Is(err, errs.ErrInvalidInput):
-		return *errs.NewHTTPError(http.StatusBadRequest, err.Error())
+		return *errs.NewHTTPError(http.StatusBadRequest, message)
 	case errors.Is(err, errs.ErrinternalError):
-		return *errs.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return *errs.NewHTTPError(http.StatusInternalServerError, message)
 	case errors.Is(err, errs.ErrNotFound):
-		return *errs.NewHTTPError(http.StatusNotFound, err.Error())
+		return *errs.NewHTTPError(http.StatusNotFound, message)
+	case errors.Is(err, errs.ErrNotAuthorized):
+		return *errs.NewHTTPError(http.StatusUnauthorized, message)
+	case errors.Is(err, errs.ErrConflict):
+		return *errs.NewHTTPError(http.StatusConflict, message)
 	default:
-		return *errs.NewHTTPError(http.StatusInternalServerError, "internal error")
+		return *errs.NewHTTPError(http.StatusInternalServerError, translator.TranslateGivenCtx(ctx, "internalerror"))
 	}
 }

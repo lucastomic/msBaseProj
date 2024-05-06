@@ -3,63 +3,81 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 
-	"github.com/gorilla/mux"
-	"github.com/lucastomic/dmsMetadataService/internal/controller"
-	"github.com/lucastomic/dmsMetadataService/internal/controller/apitypes"
-	"github.com/lucastomic/dmsMetadataService/internal/logging"
-	"github.com/lucastomic/dmsMetadataService/internal/middleware"
+	"github.com/rs/cors"
+
+	"github.com/lucastomic/msBaseProj/internal/controller"
+	"github.com/lucastomic/msBaseProj/internal/controller/apitypes"
+	"github.com/lucastomic/msBaseProj/internal/errs"
+	"github.com/lucastomic/msBaseProj/internal/logging"
+	"github.com/lucastomic/msBaseProj/internal/middleware"
+	"github.com/lucastomic/msBaseProj/internal/translator"
 )
 
 // Server represents the core structure of an HTTP server. It encapsulates all necessary components
 // for server operation, including routing, logging, and middleware management.
 type Server struct {
-	listenAddr  string                  // The address on which the server listens for incoming requests.
-	controller  controller.Controller   // Controller manages routing of requests to their respective handlers.
-	apiLogger   logging.Logger          // apiLogger is used for logging general API requests information.
-	logicLogger logging.Logger          // logicLogger is specialized for logging business logic related events.
-	middlewares []middleware.Middleware // middlewares is a slice of Middleware interfaces to be applied to all requests.
+	listenAddr     string                  // The address on which the server listens for incoming requests.
+	controller     []controller.Controller // Controller manages routing of requests to their respective handlers.
+	logger         logging.Logger          // logicLogger is specialized for logging business logic related events.
+	middlewares    []middleware.Middleware // middlewares is a slice of Middleware interfaces to be applied to all requests.
+	authMiddleware middleware.Middleware   // authMiddleware is the middleware for those routes who requires authentication
+	allowOrigins   []string                // allowOrigins is a list of origins that are allowed to make requests to the server
 }
 
 // New creates a new instance of the Server struct, initializing it with the provided parameters
 // such as listen address, controller, API and logic loggers, and middlewares.
 func New(
 	listenAddr string,
-	controller controller.Controller,
-	apilogger logging.Logger,
-	logicLogger logging.Logger,
+	controller []controller.Controller,
+	logger logging.Logger,
 	middlewares []middleware.Middleware,
+	authMiddleware middleware.Middleware,
+	allowOrigins []string,
 ) Server {
 	return Server{
 		listenAddr,
 		controller,
-		apilogger,
-		logicLogger,
+		logger,
 		middlewares,
+		authMiddleware,
+		allowOrigins,
 	}
 }
 
 // Run initializes the server's routes based on the controller's router, applies middlewares,
 // starts listening on the specified address, and logs the server's start or any errors encountered.
 func (s *Server) Run() {
-	r := mux.NewRouter()
-	for _, route := range s.controller.Router() {
-		handlerWithMiddlewares := middleware.ChainMiddleware(
-			s.makeHTTPHandlerFunc(route.Handler),
-			s.handleError,
-			s.middlewares...,
-		)
-		r.Handle(route.Path, handlerWithMiddlewares).Methods(route.Method)
+	r := http.NewServeMux()
+	for _, controller := range s.controller {
+		for _, route := range controller.Router() {
+			middlewares := s.middlewares
+			if route.RequireAuth {
+				middlewares = append(middlewares, s.authMiddleware)
+			}
+			handlerWithMiddlewares := middleware.ChainMiddleware(
+				s.makeHTTPHandlerFunc(route.Handler),
+				s.handleError,
+				middlewares...,
+			)
+			r.Handle(fmt.Sprintf("%s /api%s", route.Method, route.Path), handlerWithMiddlewares)
+		}
 	}
-	r.NotFoundHandler = middleware.ChainMiddleware(
-		s.notFoundHandler,
-		s.handleError,
-		s.middlewares...,
-	)
-	s.apiLogger.Info(context.Background(), "Service running in %s", s.listenAddr)
-	if err := http.ListenAndServe(s.listenAddr, r); err != nil {
-		s.apiLogger.Error(context.Background(), "Failed to start server: %v", err)
+
+	c := cors.New(cors.Options{
+		AllowedOrigins:   s.allowOrigins,
+		AllowCredentials: true,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "Credentials"},
+	})
+	handler := c.Handler(r)
+
+	s.logger.Info(context.Background(), "Service running in %s", s.listenAddr)
+	if err := http.ListenAndServe(s.listenAddr, handler); err != nil {
+		s.logger.Error(context.Background(), "Failed to start server: %v", err)
 	}
 }
 
@@ -80,25 +98,24 @@ func (s *Server) handleError(
 	err error,
 	statusCode int,
 ) {
-	errMsg := map[string]string{"error": err.Error()}
+	i18n := &errs.I18nError{}
+	var message string
+	if errors.As(err, i18n) {
+		message = translator.TranslateGivenCtx(req.Context(), i18n.Code)
+	} else {
+		message = err.Error()
+	}
+	errMsg := map[string]string{"error": message}
 	s.writeResponse(req, w, apitypes.Response{Status: statusCode, Content: errMsg})
-}
-
-// notFoundHandler handles the request that points to an unexistent path.
-// It returns a 404 error not found and prints that the page wan not found.
-func (s *Server) notFoundHandler(w http.ResponseWriter, r *http.Request) {
-	s.writeResponse(r, w, apitypes.Response{Status: http.StatusNotFound, Content: "Page not found"})
 }
 
 // writeResponse prepares and sends an HTTP response based on the provided apitypes.Response struct.
 // It sets custom headers, writes the status code, and sends the response content, which can vary in type.
-// For *os.File types, the file's content is streamed to the response. For other types, the content is
-// JSON-encoded and written to the response. Errors during JSON encoding are logged.
 func (s *Server) writeResponse(req *http.Request, w http.ResponseWriter, res apitypes.Response) {
 	setCustomHeaders(w, res.Headers)
 	w.WriteHeader(res.Status)
 	if err := writeContent(w, res.Content); err != nil {
-		s.logicLogger.Error(req.Context(), "Failed to write response: %v", err)
+		s.logger.Error(req.Context(), "Failed to write response: %v", err)
 	}
 }
 

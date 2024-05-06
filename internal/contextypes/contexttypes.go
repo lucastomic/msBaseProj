@@ -5,5 +5,8 @@ package contextypes
 // the likelihood of key collisions when using context values.
 type CTXRequestIDKey struct{}
 
-// ContextPathVarKey is a type used as a context key for storing and retrieving path variables.
-type ContextPathVarKey string
+// ContextAuthKey is a type used as a context key for the currently logged user
+type ContextAuthKey struct{}
+
+// ContextLangKey is a type used as a context key for the languague requested
+type ContextLangKey struct{}

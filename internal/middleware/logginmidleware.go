@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lucastomic/dmsMetadataService/internal/logging"
+	"github.com/lucastomic/msBaseProj/internal/logging"
 )
 
 // logginMiddleware struct holds a logging.Logger, providing logging capabilities across the application.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lucastomic/dmsMetadataService/internal/contextypes"
+	"github.com/lucastomic/msBaseProj/internal/contextypes"
 )
 
 // requestIDMiddleware is a middleware that ensures each HTTP request contains an X-Request-ID header.

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lucastomic/dmsMetadataService/internal/controller/apitypes"
+	"github.com/lucastomic/msBaseProj/internal/controller/apitypes"
 )
 
 // TestWriteResponse checks if the writeResponse correctly sets headers and writes the response.

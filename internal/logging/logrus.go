@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lucastomic/dmsMetadataService/internal/contextypes"
+	"github.com/lucastomic/msBaseProj/internal/contextypes"
 	"github.com/sirupsen/logrus"
 )
 
